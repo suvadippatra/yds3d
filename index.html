@@ -1,279 +1,292 @@
-<!doctype html>
-
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Double-slit — 3D Fresnel Simulation</title>
-  <style>
-    html,body{height:100%;margin:0;background:#0b1020;color:#e6eef8;font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
-    #app{height:100%;display:flex;flex-direction:column}
-    header{padding:12px 18px;background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);backdrop-filter:blur(6px);display:flex;align-items:center;gap:16px}
-    header h1{font-size:16px;margin:0;font-weight:600}
-    #canvas-wrap{flex:1;position:relative}
-    #overlay{position:absolute;right:12px;top:12px;z-index:20;display:flex;flex-direction:column;gap:8px}
-    .label{font-size:12px;opacity:0.9}
-    footer{padding:8px 12px;font-size:12px;opacity:0.9;background:linear-gradient(0deg, rgba(255,255,255,0.01), transparent);display:flex;justify-content:space-between}
-    .small-btn{background:#112034;color:#eaf4ff;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.03);cursor:pointer}
-    .hint{opacity:0.8;font-size:13px}
-    /* GUI container override to look neat */
-    .dg{z-index:30}
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Double Slit Simulator (Fixed)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050810; font-family: sans-serif; }
+        #canvas-container { width: 100vw; height: 100vh; display: block; }
+        #gui-container { position: absolute; top: 10px; right: 10px; z-index: 100; }
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #64ffda; font-size: 24px; pointer-events: none; transition: opacity 0.5s;
+        }
+        .instruction {
+            position: absolute; bottom: 20px; left: 20px; color: #8892b0;
+            background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px;
+            pointer-events: none; user-select: none;
+        }
+    </style>
+    
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
 </head>
 <body>
-  <div id="app">
-    <header>
-      <h1>Double-slit — 3D Fresnel Diffraction (WebGL)</h1>
-      <div class="label">Wavelength, slit geometry, distance and intensity controllable. GPU shader computes screen intensity in real-time.</div>
-    </header><div id="canvas-wrap">
-  <div id="overlay"></div>
-  <canvas id="c"></canvas>
-</div>
 
-<footer>
-  <div class="hint">Controls: adjust parameters on the right. Use resolution and samples to trade quality vs performance.</div>
-  <div>
-    <button id="reset" class="small-btn">Reset</button>
-    <button id="pause" class="small-btn">Pause</button>
-  </div>
-</footer>
+    <div id="loading">Loading Simulator...</div>
+    <div id="gui-container"></div>
+    <div id="canvas-container"></div>
+    <div class="instruction">
+        <b>Controls:</b><br>
+        Left Click: Rotate<br>
+        Right Click: Pan<br>
+        Scroll: Zoom
+    </div>
 
-  </div>  <!-- Libraries -->  <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>  <script src="https://unpkg.com/three@0.158.0/examples/js/controls/OrbitControls.js"></script>  <script src="https://unpkg.com/lil-gui@0.18.0/dist/lil-gui.min.js"></script>  <script src="https://unpkg.com/stats.js@0.17.0/build/stats.min.js"></script>  <script>
-  // Single-file Three.js Fresnel-style double-slit shader simulation
-  // Notes: shader approximates diffraction by summing point contributions across slit widths.
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 
-  const canvas = document.getElementById('c');
-  const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
-  renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.setClearColor(0x051023, 1);
+        // --- SCENE SETUP ---
+        const container = document.getElementById('canvas-container');
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x050810);
+        container.appendChild(renderer.domElement);
 
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(45,2,0.1,2000);
-  camera.position.set(0, 1.2, 3.0);
+        const scene = new THREE.Scene();
+        
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(2, 1.5, 3.5);
 
-  const controls = new THREE.OrbitControls(camera, renderer.domElement);
-  controls.target.set(0,0,0);
-  controls.enablePan = true;
-  controls.minDistance = 0.6;
-  controls.maxDistance = 10;
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.target.set(0, 0, 0.5);
 
-  // Screen --- plane where intensity is computed
-  const planeGeom = new THREE.PlaneGeometry(2.2, 1.2, 1, 1);
+        // --- SIMULATION PARAMETERS ---
+        const params = {
+            wavelength: 0.08,    
+            screenDistance: 1.5, 
+            slitSeparation: 0.3, 
+            slitWidth: 0.08,     
+            intensity: 15.0,
+            samples: 20,
+            showGraph: true
+        };
 
-  // Shader material
-  const frag = `
-  precision highp float;
-  uniform float u_time;
-  uniform vec2 u_resolution;
-  uniform float u_wavelength; // in physical units (scaled)
-  uniform float u_screenZ; // distance from slits to screen
-  uniform float u_slitSep; // center separation (x)
-  uniform float u_slitWidth; // slit width (y extent)
-  uniform float u_slitHeight; // not used in 1D approx
-  uniform int u_samples; // sampling per slit
-  uniform float u_apertureY; // aperture vertical size
-  uniform float u_intensity;
-  uniform int u_model; // 0: two point-sources (fast), 1: sampled-slit (accurate)
-  
-  const float PI = 3.141592653589793;
+        // --- 1. THE SCREEN (SHADER) ---
+        const vertexShader = `
+            varying vec2 vUv;
+            varying vec3 vPos;
+            void main() {
+                vUv = uv;
+                vPos = position;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `;
 
-  // Simple complex add via vec2 (re,im)
-  vec2 cAdd(vec2 a, vec2 b){return a+b;}
-  vec2 cMul(vec2 a, vec2 b){return vec2(a.x*b.x - a.y*b.y, a.x*b.y + a.y*b.x);} 
-  vec2 cExp(float phase){return vec2(cos(phase), sin(phase));}
+        const fragmentShader = `
+            precision highp float;
+            varying vec2 vUv;
+            varying vec3 vPos;
+            
+            uniform float u_wavelength;
+            uniform float u_screenZ;
+            uniform float u_slitSep;
+            uniform float u_slitWidth;
+            uniform float u_intensity;
+            uniform int u_samples;
 
-  // compute contribution from a point source at xs (on slit plane y = 0, z = 0)
-  vec2 pointField(vec2 pScreen, vec2 srcPos, float k){
-    // pScreen: (x,y) on screen plane; srcPos: (x,y) on slit plane (z=0)
-    float dx = pScreen.x - srcPos.x;
-    float dy = pScreen.y - srcPos.y;
-    float dz = u_screenZ;
-    float r = sqrt(dx*dx + dy*dy + dz*dz);
-    float phase = k * r;
-    float amp = 1.0 / max(0.0001, r);
-    return amp * cExp(phase);
-  }
+            const float PI = 3.14159265359;
 
-  void main(){
-    // map fragment uv to physical coordinates on screen plane centered at (0,0)
-    vec2 uv = (gl_FragCoord.xy / u_resolution.xy) * 2.0 - 1.0;
-    uv.x *= u_resolution.x / u_resolution.y; // aspect
+            vec2 cAdd(vec2 a, vec2 b) { return a + b; }
+            vec2 cExp(float phase) { return vec2(cos(phase), sin(phase)); }
 
-    // scale uv to plane size ~ camera frustum; plane in model is 2.2 x 1.2
-    vec2 screenPos = vec2(uv.x * 1.1, uv.y * 0.6);
+            vec2 pointSource(vec2 targetPos, vec2 sourcePos, float k) {
+                float dx = targetPos.x - sourcePos.x;
+                float dy = targetPos.y - sourcePos.y; 
+                float dz = u_screenZ; // Vertical distance
+                float r = sqrt(dx*dx + dy*dy + dz*dz);
+                float phase = k * r;
+                return (1.0 / r) * cExp(phase);
+            }
 
-    float k = 2.0 * PI / u_wavelength;
+            void main() {
+                // Map UV to physical size (3.0 wide, 1.5 high)
+                vec2 p = vec2(vPos.x, vPos.y); 
 
-    vec2 field = vec2(0.0);
+                float k = 2.0 * PI / u_wavelength;
+                vec2 field = vec2(0.0);
 
-    // slit centers at z=0 plane, y variable across slit height
-    // two slits centered at x = +sep/2 and -sep/2
-    float sep = u_slitSep * 0.5;
-    float leftX = -sep;
-    float rightX = +sep;
+                float halfSep = u_slitSep / 2.0;
 
-    if(u_model == 0){
-      // fast approximate: two point sources at slit centers
-      field += pointField(screenPos, vec2(leftX, 0.0), k);
-      field += pointField(screenPos, vec2(rightX, 0.0), k);
-    } else {
-      // sampled slit: integrate across slit width (y)
-      int N = u_samples; // iterations
-      for(int i=0;i<128;i++){
-        if(i>=N) break;
-        float t = (float(i)+0.5)/float(N) - 0.5; // [-0.5,0.5]
-        float yOffset = t * u_slitWidth;
-        // left slit sample
-        field = cAdd(field, pointField(screenPos, vec2(leftX, yOffset), k));
-        // right slit sample
-        field = cAdd(field, pointField(screenPos, vec2(rightX, yOffset), k));
-      }
-    }
+                // Integration Loop
+                for(int i = 0; i < 40; i++) {
+                    if(i >= u_samples) break;
+                    
+                    float t = (float(i) + 0.5) / float(u_samples) - 0.5;
+                    float xOffset = t * u_slitWidth;
 
-    float intensity = dot(field, field); // re^2 + im^2
-    intensity *= u_intensity;
+                    // Left Slit Source
+                    field = cAdd(field, pointSource(p, vec2(-halfSep + xOffset, 0.0), k));
+                    // Right Slit Source
+                    field = cAdd(field, pointSource(p, vec2(halfSep + xOffset, 0.0), k));
+                }
 
-    // tone mapping and color map
-    // use a simple non-linear mapping and hue shift by phase
-    float phase = atan(field.y, field.x);
-    float bright = 1.0 - exp(-intensity*0.8);
-    // color by intensity with subtle phase modulation
-    vec3 col = vec3(pow(bright,0.7));
-    // add thin colored fringes by phase
-    col += 0.08 * vec3(0.7 + 0.3*cos(phase + u_time*0.3), 0.6 + 0.3*sin(phase*0.9), 0.5 + 0.5*cos(phase*0.4));
+                float I = dot(field, field); 
+                I *= u_intensity * 0.01; 
 
-    // vignette
-    float dist = length(screenPos) / 1.25;
-    col *= smoothstep(1.0, 0.6, dist);
+                // Green Phosphor Color
+                vec3 col = vec3(0.1, 0.9, 0.7) * I;
+                // Core brightness (white center)
+                col += vec3(1.0) * smoothstep(1.0, 3.0, I);
+                
+                // Vignette
+                float vig = 1.0 - length(vUv - 0.5) * 1.5;
+                col *= clamp(vig, 0.0, 1.0);
 
-    gl_FragColor = vec4(col,1.0);
-  }
-  `;
+                gl_FragColor = vec4(col, 1.0);
+            }
+        `;
 
-  const vert = `
-  varying vec2 vUv;
-  void main(){
-    vUv = uv;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
-  }
-  `;
+        const uniforms = {
+            u_wavelength: { value: params.wavelength },
+            u_screenZ: { value: params.screenDistance },
+            u_slitSep: { value: params.slitSeparation },
+            u_slitWidth: { value: params.slitWidth },
+            u_intensity: { value: params.intensity },
+            u_samples: { value: params.samples }
+        };
 
-  const uniforms = {
-    u_time:{value:0.0},
-    u_resolution:{value:new THREE.Vector2(1024,512)},
-    u_wavelength:{value:0.03},
-    u_screenZ:{value:1.2},
-    u_slitSep:{value:0.24},
-    u_slitWidth:{value:0.06},
-    u_intensity:{value:18.0},
-    u_samples:{value:10},
-    u_model:{value:1}
-  };
+        const screenGeo = new THREE.PlaneGeometry(3.0, 1.5);
+        const screenMat = new THREE.ShaderMaterial({
+            vertexShader, fragmentShader, uniforms, side: THREE.DoubleSide
+        });
+        const screenMesh = new THREE.Mesh(screenGeo, screenMat);
+        scene.add(screenMesh);
 
-  const mat = new THREE.ShaderMaterial({
-    vertexShader:vert,
-    fragmentShader:frag,
-    uniforms:uniforms,
-    side:THREE.DoubleSide
-  });
+        // --- 2. INTENSITY GRAPH (LINE) ---
+        const MAX_POINTS = 300;
+        const lineGeo = new THREE.BufferGeometry();
+        const linePos = new Float32Array(MAX_POINTS * 3);
+        lineGeo.setAttribute('position', new THREE.BufferAttribute(linePos, 3));
+        const graphLine = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0xffff00 }));
+        scene.add(graphLine);
 
-  const screen = new THREE.Mesh(planeGeom, mat);
-  screen.position.set(0,0,0);
-  scene.add(screen);
+        function updateGraph() {
+            if(!params.showGraph) {
+                graphLine.visible = false; return;
+            }
+            graphLine.visible = true;
+            
+            const k = 2.0 * Math.PI / params.wavelength;
+            const z = params.screenDistance;
+            const positions = graphLine.geometry.attributes.position.array;
 
-  // slit-plane visualization (thin plane at z=0)
-  const slitGeom = new THREE.PlaneGeometry(0.6, 0.18);
-  const slitMat = new THREE.MeshBasicMaterial({color:0x112233, transparent:true, opacity:0.8});
-  const slitMesh = new THREE.Mesh(slitGeom, slitMat);
-  slitMesh.position.set(0,0,-0.001);
-  scene.add(slitMesh);
+            for(let i=0; i<MAX_POINTS; i++) {
+                // Map 0..299 to x coordinates -1.5..1.5
+                const x = (i / (MAX_POINTS-1)) * 3.0 - 1.5;
+                
+                let re = 0, im = 0;
+                for(let s=0; s<params.samples; s++) {
+                    const t = (s + 0.5) / params.samples - 0.5;
+                    const xOff = t * params.slitWidth;
+                    
+                    const sources = [-params.slitSeparation/2 + xOff, params.slitSeparation/2 + xOff];
+                    for(let srcX of sources) {
+                        const dist = Math.sqrt((x - srcX)**2 + z*z);
+                        const phase = k * dist;
+                        const amp = 1.0 / dist;
+                        re += amp * Math.cos(phase);
+                        im += amp * Math.sin(phase);
+                    }
+                }
+                const intensity = (re*re + im*im) * params.intensity * 0.01;
+                
+                positions[i*3] = x;
+                positions[i*3+1] = intensity * 0.5; // Height scale
+                positions[i*3+2] = 0.05; // Z-offset
+            }
+            graphLine.geometry.attributes.position.needsUpdate = true;
+            graphLine.position.z = params.screenDistance;
+        }
 
-  // small helper axes
-  const grid = new THREE.GridHelper(4,20,0x113355,0x081018);
-  grid.rotation.x = Math.PI/2;
-  grid.position.z = 0.0;
-  grid.material.opacity = 0.08;
-  grid.material.transparent = true;
-  scene.add(grid);
+        // --- 3. SLIT GEOMETRY (SHUTTERS) ---
+        const barrierMat = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.5, side: THREE.DoubleSide });
+        const leftB = new THREE.Mesh(new THREE.PlaneGeometry(1,1), barrierMat);
+        const rightB = new THREE.Mesh(new THREE.PlaneGeometry(1,1), barrierMat);
+        const midB = new THREE.Mesh(new THREE.PlaneGeometry(1,1), barrierMat);
+        const slitGroup = new THREE.Group();
+        slitGroup.add(leftB, rightB, midB);
+        scene.add(slitGroup);
 
-  // lights & demo objects (for 3D feel)
-  const amb = new THREE.AmbientLight(0xffffff, 0.12);
-  scene.add(amb);
-  const dir = new THREE.DirectionalLight(0xffffff, 0.35);
-  dir.position.set(4,5,2);
-  scene.add(dir);
+        // --- 4. LIGHTS & HELPERS ---
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+        dirLight.position.set(5, 5, 5);
+        scene.add(dirLight);
+        
+        const grid = new THREE.GridHelper(20, 20, 0x333333, 0x111111);
+        grid.position.y = -0.75;
+        scene.add(grid);
 
-  // GUI
-  const gui = new lil.GUI({container:document.getElementById('overlay')});
-  const params = {
-    model: 'sampled',
-    samples: 10,
-    wavelength: 0.03,
-    screenDistance: 1.2,
-    slitSeparation: 0.24,
-    slitWidth: 0.06,
-    intensity: 18.0,
-    animate:true
-  };
+        // --- UPDATER ---
+        function update() {
+            // Update Uniforms
+            uniforms.u_wavelength.value = params.wavelength;
+            uniforms.u_screenZ.value = params.screenDistance;
+            uniforms.u_slitSep.value = params.slitSeparation;
+            uniforms.u_slitWidth.value = params.slitWidth;
+            uniforms.u_intensity.value = params.intensity;
+            uniforms.u_samples.value = params.samples;
 
-  gui.add(params, 'model', ['point','sampled']).name('Model').onChange(v=>{uniforms.u_model.value = (v==='point')?0:1});
-  gui.add(params, 'samples', 1, 64, 1).name('Samples').onChange(v=>{uniforms.u_samples.value = v});
-  gui.add(params, 'wavelength', 0.005, 0.2, 0.001).name('Wavelength').onChange(v=>{uniforms.u_wavelength.value = v});
-  gui.add(params, 'screenDistance', 0.2, 3.0, 0.01).name('Screen Z').onChange(v=>{uniforms.u_screenZ.value = v});
-  gui.add(params, 'slitSeparation', 0.02, 1.0, 0.01).name('Slit Sep').onChange(v=>{uniforms.u_slitSep.value = v});
-  gui.add(params, 'slitWidth', 0.01, 0.4, 0.001).name('Slit Width').onChange(v=>{uniforms.u_slitWidth.value = v});
-  gui.add(params, 'intensity', 0.2, 80.0, 0.1).name('Intensity').onChange(v=>{uniforms.u_intensity.value = v});
-  gui.add(params, 'animate').name('Animate');
+            // Update Screen Position
+            screenMesh.position.z = params.screenDistance;
 
-  // Stats
-  const stats = new Stats();
-  stats.dom.style.position = 'absolute';
-  stats.dom.style.left = '12px';
-  stats.dom.style.top = '12px';
-  document.getElementById('canvas-wrap').appendChild(stats.dom);
+            // Update Slit Shutters
+            const sep = params.slitSeparation;
+            const w = params.slitWidth;
+            
+            // Middle Blocker
+            const midWidth = Math.max(0, sep - w);
+            midB.scale.set(midWidth, 2, 1);
+            midB.visible = midWidth > 0.001;
 
-  // resize
-  function resize(){
-    const w = window.innerWidth;
-    const h = window.innerHeight - document.querySelector('header').offsetHeight - document.querySelector('footer').offsetHeight;
-    renderer.setSize(w, h);
-    const ar = w/h;
-    camera.aspect = ar; camera.updateProjectionMatrix();
-    uniforms.u_resolution.value.set(renderer.domElement.width, renderer.domElement.height);
-  }
-  window.addEventListener('resize', resize);
-  resize();
+            // Outer Blockers
+            leftB.scale.set(2, 2, 1);
+            leftB.position.set( (-sep/2 - w/2) - 1.0, 0, 0 );
+            
+            rightB.scale.set(2, 2, 1);
+            rightB.position.set( (sep/2 + w/2) + 1.0, 0, 0 );
 
-  // buttons
-  document.getElementById('reset').addEventListener('click', ()=>{
-    params.wavelength = 0.03; params.screenDistance=1.2; params.slitSeparation=0.24; params.slitWidth=0.06; params.intensity=18.0; params.samples=10; params.model='sampled'; params.animate=true;
-    // update GUI and uniforms
-    for(const c of document.querySelectorAll('.lil-gui')){} // noop
-    uniforms.u_wavelength.value = params.wavelength;
-    uniforms.u_screenZ.value = params.screenDistance;
-    uniforms.u_slitSep.value = params.slitSeparation;
-    uniforms.u_slitWidth.value = params.slitWidth;
-    uniforms.u_intensity.value = params.intensity;
-    uniforms.u_samples.value = params.samples;
-    uniforms.u_model.value = 1;
-  });
+            updateGraph();
+        }
 
-  let paused = false;
-  document.getElementById('pause').addEventListener('click', ()=>{paused = !paused; document.getElementById('pause').textContent = paused ? 'Resume' : 'Pause';});
+        // --- GUI ---
+        const gui = new GUI({ container: document.getElementById('gui-container') });
+        gui.add(params, 'wavelength', 0.01, 0.2).name('Wavelength').onChange(update);
+        gui.add(params, 'screenDistance', 0.5, 4.0).name('Screen Distance').onChange(update);
+        gui.add(params, 'slitSeparation', 0.05, 1.0).name('Slit Separation').onChange(update);
+        gui.add(params, 'slitWidth', 0.01, 0.3).name('Slit Width').onChange(update);
+        gui.add(params, 'intensity', 1, 50).name('Intensity').onChange(update);
+        gui.add(params, 'showGraph').name('Show Graph').onChange(update);
 
-  // animation loop
-  const clock = new THREE.Clock();
-  function render(){
-    stats.begin();
-    const t = clock.getElapsedTime();
-    if(!paused && params.animate) uniforms.u_time.value = t;
+        // --- INIT & ANIMATE ---
+        document.getElementById('loading').style.opacity = 0;
+        update();
 
-    // render
-    renderer.render(scene, camera);
-    stats.end();
-    requestAnimationFrame(render);
-  }
-  render();
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
 
-  </script></body>
+        // Handle Window Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
 </html>
